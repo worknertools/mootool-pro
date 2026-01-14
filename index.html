@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <title>mootool</title>
+    
+
+  </head>
+    
+  <body>
+  <!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outline Studio | Cross-Platform Burst Edition</title>
+    <style>
+        :root {
+            --panel-bg: rgba(255, 255, 255, 0.95);
+            --accent: #000000;
+            --text: #111111;
+            --ui-font: 9px;
+            --ui-weight: 400; 
+            --workspace: #f7f7f7;
+            --label-color: #999;
+        }
+
+        * { box-sizing: border-box; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+        body {
+            margin: 0; overflow: hidden; background: var(--workspace);
+            /* 兼容 Mac 和 Windows 的字体栈 */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: var(--text);
+            font-weight: var(--ui-weight);
+            user-select: none;
+        }
+        
+        #viewport { 
+            width: 100vw; height: 100vh; display: flex; 
+            align-items: center; justify-content: center; position: relative; 
+        }
+
+        #stage {
+            position: relative; display: inline-block;
+            opacity: 0; transition: opacity 0.8s ease-out;
+        }
+        #stage.visible { opacity: 1; }
+        
+        #canvas-wrapper {
+            position: relative; background-color: #ffffff;
+            display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
+            border: none;
+        }
+
+        #render-canvas { 
+            width: 100%; height: 100%; display: block; 
+            /* 关键：强制硬件加速提升滤镜表现 */
+            transform: translateZ(0);
+            filter: url(#silhouette-filter); 
+            will-change: filter; 
+        }
+
+        #ui {
+            position: absolute; width: 160px; background: var(--panel-bg); 
+            padding: 12px 15px; z-index: 2000; display: flex; flex-direction: column;
+            left: 0; top: 0; 
+            border: 1px solid rgba(0,0,0,0.08);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transform-origin: 0 0;
+            cursor: move;
+            will-change: transform;
+        }
+        
+        #ui button, #ui input { cursor: pointer; }
+        button, label { font-size: var(--ui-font) !important; font-weight: var(--ui-weight) !important; letter-spacing: 0.05em; }
+
+        .upload-btn { 
+            width: 100%; height: 20px; background: var(--accent); color: #fff; 
+            border: none; position: relative; margin-bottom: 12px; 
+            display: flex; align-items: center; justify-content: center; gap: 4px;
+        }
+        .upload-btn svg { width: 8px; height: 8px; fill: none; stroke: currentColor; stroke-width: 2.5; }
+        .upload-btn input { position: absolute; opacity: 0; width: 100%; height: 100%; left: 0; top: 0; }
+
+        .control { margin-bottom: 8px; width: 100%; }
+        .control label { color: var(--label-color); margin-bottom: 4px; display: block; }
+
+        input[type=range] { width: 100%; height: 2px; background: #eee; appearance: none; -webkit-appearance: none; outline: none; margin: 10px 0; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 6px; height: 6px; background: #000; border-radius: 50%; border: none; }
+        input[type=range]::-moz-range-thumb { width: 6px; height: 6px; background: #000; border-radius: 50%; border: none; }
+
+        .export-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+        .reset-btn { background: none; border: none; padding: 0; color: var(--label-color); cursor: pointer; }
+        
+        .action-row { display: block; margin-top: 2px; }
+        .action-row button { width: 100%; background: #f9f9f9; border: 1px solid #eee; padding: 6px 0; color: #333; transition: all 0.2s; }
+        .action-row button:hover { background: #000; color: #fff; border-color: #000; }
+
+        #svg-filters { position: absolute; width: 0; height: 0; visibility: hidden; }
+        .exporting { pointer-events: none; opacity: 0.5; }
+    </style>
+</head>
+<body>
+
+<svg id="svg-filters">
+    <defs>
+        <!-- 使用 sRGB 确保跨系统色彩空间一致 -->
+        <filter id="silhouette-filter" x="-100%" y="-100%" width="300%" height="300%" color-interpolation-filters="sRGB">
+            <feMorphology id="f-dilate" operator="dilate" radius="2" in="SourceGraphic" result="thick"/>
+            <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" result="noise" seed="1"/>
+            <feDisplacementMap id="f-disp" in="thick" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G" result="burst"/>
+            <!-- 强化边缘 Alpha 通道，确保 Windows 端导出无杂色 -->
+            <feColorMatrix type="matrix" values="0 0 0 0 0, 0 0 0 0 0, 0 0 0 0 0, 0 0 0 100 -10" />
+        </filter>
+    </defs>
+</svg>
+
+<div id="viewport">
+    <div id="stage">
+        <div id="canvas-wrapper"></div>
+        <div id="ui">
+            <button class="upload-btn">
+                <svg viewBox="0 0 24 24"><path d="M12 3v13M7 8l5-5 5 5M5 20h14"/></svg>
+                Import
+                <input type="file" id="fileInput" accept="image/*">
+            </button>
+
+            <div class="control">
+                <label>Threshold</label>
+                <input type="range" id="param-thresh" min="0.0" max="1.0" step="0.01" value="0.5">
+            </div>
+            <div class="control">
+                <label>Stroke (Bold)</label>
+                <input type="range" id="param-weight" min="0.0" max="40.0" step="0.1" value="6.0">
+            </div>
+            <div class="control">
+                <label>Wobble (Burst)</label>
+                <input type="range" id="param-rough" min="0.0" max="80.0" step="0.5" value="20.0">
+            </div>
+
+            <div class="control" id="export-section">
+                <div class="export-header">
+                    <label>Export</label>
+                    <button class="reset-btn" onclick="resetAll()">Reset</button>
+                </div>
+                <div class="action-row">
+                    <button onclick="saveSVG()" id="btn-svg">SVG</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script id="vertexShader" type="x-shader/x-vertex">
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+</script>
+<script id="fragmentShader" type="x-shader/x-fragment">
+    precision highp float;
+    uniform sampler2D tDiffuse;
+    uniform vec2 uResolution;
+    uniform float uThreshold;
+    uniform bool uHasTexture;
+    varying vec2 vUv;
+
+    float getLuma(vec2 uv) {
+        vec4 col = texture2D(tDiffuse, uv);
+        return dot(col.rgb, vec3(0.299, 0.587, 0.114));
+    }
+
+    void main() {
+        if(!uHasTexture) discard;
+        vec2 texel = 1.0 / uResolution;
+        float mC = step(uThreshold, getLuma(vUv));
+        float mR = step(uThreshold, getLuma(vUv + vec2(texel.x, 0.0)));
+        float mL = step(uThreshold, getLuma(vUv - vec2(texel.x, 0.0)));
+        float mT = step(uThreshold, getLuma(vUv + vec2(0.0, texel.y)));
+        float mB = step(uThreshold, getLuma(vUv - vec2(0.0, texel.y)));
+        float edge = (mC != mR || mC != mL || mC != mT || mC != mB) ? 1.0 : 0.0;
+        
+        // 边界保护
+        if(vUv.x < 0.002 || vUv.x > 0.998 || vUv.y < 0.002 || vUv.y > 0.998) edge = 0.0;
+        
+        gl_FragColor = vec4(0.0, 0.0, 0.0, edge);
+    }
+</script>
+
+<script>
+    let scene, camera, renderer, material, quad;
+    const RATIO = 0.75, BASE_H = 1200; 
+    let currentImgAspect = 1;
+    let isDraggingUI = false;
+    let uiStartX, uiStartY, uiInitL, uiInitT, uiScale = 1;
+    const uiPanel = document.getElementById('ui');
+
+    function init() {
+        const wrapper = document.getElementById('canvas-wrapper');
+        scene = new THREE.Scene();
+        camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        
+        // 优化渲染器设置：针对 Mac/Windows 差异保持 drawingBuffer
+        renderer = new THREE.WebGLRenderer({ 
+            antialias: true, 
+            alpha: true, 
+            preserveDrawingBuffer: true,
+            powerPreference: "high-performance"
+        });
+        
+        // 统一 DPR 处理
+        const dpr = Math.min(window.devicePixelRatio, 2.0);
+        renderer.setPixelRatio(dpr); 
+        renderer.domElement.id = "render-canvas";
+        wrapper.appendChild(renderer.domElement);
+
+        material = new THREE.ShaderMaterial({
+            transparent: true,
+            uniforms: {
+                tDiffuse: { value: new THREE.Texture() },
+                uResolution: { value: new THREE.Vector2(BASE_H * RATIO, BASE_H) },
+                uThreshold: { value: 0.5 },
+                uHasTexture: { value: false }
+            },
+            vertexShader: document.getElementById('vertexShader').textContent,
+            fragmentShader: document.getElementById('fragmentShader').textContent
+        });
+
+        quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+        scene.add(quad);
+
+        setupEventListeners();
+        initUIMovement();
+        onResize();
+        setTimeout(() => { document.getElementById('stage').classList.add('visible'); }, 200);
+        animate();
+    }
+
+    function setupEventListeners() {
+        document.getElementById('fileInput').onchange = (e) => {
+            const file = e.target.files[0];
+            if(!file) return;
+            const url = URL.createObjectURL(file);
+            new THREE.TextureLoader().load(url, (tex) => {
+                tex.minFilter = THREE.LinearFilter;
+                material.uniforms.tDiffuse.value = tex;
+                material.uniforms.uHasTexture.value = true;
+                currentImgAspect = tex.image.width / tex.image.height;
+                updateGraphicSize();
+            });
+        };
+        document.getElementById('param-thresh').oninput = (e) => material.uniforms.uThreshold.value = e.target.value;
+        document.getElementById('param-weight').oninput = syncFilter;
+        document.getElementById('param-rough').oninput = syncFilter;
+    }
+
+    function updateGraphicSize() {
+        if(!material.uniforms.uHasTexture.value) return;
+        const SAFE_ZONE = 0.5; // 预留 50% 空间供滤镜线条扩张
+        let sw, sh;
+        if (currentImgAspect > RATIO) {
+            sw = SAFE_ZONE; sh = SAFE_ZONE * (RATIO / currentImgAspect);
+        } else {
+            sh = SAFE_ZONE; sw = SAFE_ZONE * (currentImgAspect / RATIO);
+        }
+        quad.scale.set(sw, sh, 1);
+    }
+
+    function initUIMovement() {
+        const handleStart = (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+            isDraggingUI = true;
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            uiStartX = clientX;
+            uiStartY = clientY;
+            const rect = uiPanel.getBoundingClientRect();
+            const stageRect = document.getElementById('stage').getBoundingClientRect();
+            uiInitL = (rect.left - stageRect.left) / uiScale;
+            uiInitT = (rect.top - stageRect.top) / uiScale;
+            
+            document.addEventListener('mousemove', handleMove);
+            document.addEventListener('mouseup', handleEnd);
+            document.addEventListener('touchmove', handleMove, {passive: false});
+            document.addEventListener('touchend', handleEnd);
+        };
+
+        const handleMove = (e) => {
+            if (!isDraggingUI) return;
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            const dx = (clientX - uiStartX) / uiScale;
+            const dy = (clientY - uiStartY) / uiScale;
+            uiPanel.style.left = (uiInitL + dx) + 'px';
+            uiPanel.style.top = (uiInitT + dy) + 'px';
+        };
+
+        const handleEnd = () => {
+            isDraggingUI = false;
+            document.removeEventListener('mousemove', handleMove);
+            document.removeEventListener('mouseup', handleEnd);
+        };
+
+        uiPanel.addEventListener('mousedown', handleStart);
+        uiPanel.addEventListener('touchstart', handleStart);
+    }
+
+    function syncFilter() {
+        // 关键优化：考虑设备像素比(DPR)，确保粗细在所有屏幕上看起来一致
+        const dpr = window.devicePixelRatio || 1;
+        const factor = (renderer.domElement.height / 1200) * (2.0 / dpr);
+        const radius = parseFloat(document.getElementById('param-weight').value);
+        const wobble = parseFloat(document.getElementById('param-rough').value);
+        
+        document.getElementById('f-dilate').setAttribute('radius', radius * factor);
+        const dynamicScale = wobble * factor * (1 + radius * 0.02);
+        document.getElementById('f-disp').setAttribute('scale', dynamicScale);
+    }
+
+    function resetAll() {
+        material.uniforms.uHasTexture.value = false;
+        document.getElementById('fileInput').value = "";
+        document.getElementById('param-thresh').value = 0.5;
+        document.getElementById('param-weight').value = 6.0;
+        document.getElementById('param-rough').value = 20.0;
+        material.uniforms.uThreshold.value = 0.5;
+        syncFilter();
+        uiPanel.style.transition = 'all 0.5s cubic-bezier(0.2, 1, 0.3, 1)';
+        uiPanel.style.left = '0px';
+        uiPanel.style.top = '0px';
+        setTimeout(() => uiPanel.style.transition = 'none', 500);
+    }
+
+    function onResize() {
+        const wrapper = document.getElementById('canvas-wrapper');
+        const vh = window.innerHeight;
+        const h = vh * 0.85;
+        const w = h * RATIO;
+        wrapper.style.width = w + 'px'; 
+        wrapper.style.height = h + 'px';
+        
+        // 响应式 UI 缩放
+        uiScale = Math.max(h / 900, 0.5);
+        uiPanel.style.transform = `scale(${uiScale})`;
+
+        renderer.setSize(BASE_H * RATIO, BASE_H);
+        updateGraphicSize();
+        syncFilter();
+    }
+
+    function animate() { 
+        requestAnimationFrame(animate); 
+        renderer.render(scene, camera); 
+    }
+
+    async function saveSVG() {
+        if(!material.uniforms.uHasTexture.value) return;
+        const section = document.getElementById('export-section');
+        section.classList.add('exporting');
+        
+        // 等待一帧确保渲染完成
+        await new Promise(r => requestAnimationFrame(r));
+
+        const w = renderer.domElement.width;
+        const h = renderer.domElement.height;
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = w; offCanvas.height = h;
+        const ctx = offCanvas.getContext('2d');
+        
+        // 将滤镜应用到导出画布
+        ctx.filter = getComputedStyle(renderer.domElement).filter;
+        ctx.drawImage(renderer.domElement, 0, 0);
+
+        const imgData = ctx.getImageData(0, 0, w, h).data;
+        let pathData = "";
+        
+        // 优化的像素扫描算法，减少 Windows 端生成大型 SVG 的卡顿
+        for (let y = 0; y < h; y += 1) {
+            for (let x = 0; x < w; x += 1) {
+                const idx = (y * w + x) * 4 + 3;
+                if (imgData[idx] > 120) {
+                    let run = 1;
+                    while (x + run < w && imgData[(y * w + (x + run)) * 4 + 3] > 120) {
+                        run++;
+                    }
+                    pathData += `M${x},${y}h${run}v1h-${run}z `;
+                    x += run - 1;
+                }
+            }
+        }
+
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><path d="${pathData}" fill="black"/></svg>`;
+        const blob = new Blob([svg], {type: 'image/svg+xml'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `outline-burst-${Date.now()}.svg`;
+        a.click();
+        
+        section.classList.remove('exporting');
+    }
+
+    window.addEventListener('load', init);
+    window.addEventListener('resize', onResize);
+</script>
+</body>
+</html>
+    
+  </body>
+  
+</html>
